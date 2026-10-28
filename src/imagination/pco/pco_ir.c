@@ -19,6 +19,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 #ifdef __APPLE__
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
@@ -29,6 +30,7 @@
 /* Sampled diagnostic only. The caller invokes timing through PCO_PASS;
  * nested passes are inclusive, and process-local records never contain IR. */
 _Thread_local struct pco_timing_state *pco_timing_current;
+_Thread_local struct pco_timing_scope *pco_timing_scope_current;
 static unsigned pco_timing_sequence;
 
 uint64_t pco_timing_now(void)
@@ -38,16 +40,41 @@ uint64_t pco_timing_now(void)
    return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
 }
 
-bool pco_timing_begin(struct pco_timing_state *state)
+uint64_t pco_timing_tid(void)
+{
+#ifdef __APPLE__
+   uint64_t tid = 0;
+   return pthread_threadid_np(NULL, &tid) ? 0 : tid;
+#else
+   return (uint64_t)(uintptr_t)pthread_self();
+#endif
+}
+
+bool pco_timing_claim(unsigned *id)
 {
    const char *enabled = getenv("PVR_PIPELINE_TIMING");
-   if (!enabled || strcmp(enabled, "1") || pco_timing_current) return false;
-   unsigned ordinal = __atomic_fetch_add(&pco_timing_sequence, 1, __ATOMIC_RELAXED);
-   if (ordinal >= 256 || ordinal % 64) return false;
+   if (!enabled || strcmp(enabled, "1")) return false;
+   unsigned value = __atomic_load_n(&pco_timing_sequence, __ATOMIC_RELAXED);
+   do {
+      if (value >= 256) return false;
+   } while (!__atomic_compare_exchange_n(&pco_timing_sequence, &value, value + 1,
+                                          false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+   if (value % 64) return false;
+   *id = value;
+   return true;
+}
+
+bool pco_timing_begin(struct pco_timing_state *state)
+{
+   struct pco_timing_scope *scope = pco_timing_scope_current;
+   if (!scope || pco_timing_current) return false;
+   unsigned ordinal = scope->attempts++;
+   if (ordinal >= PCO_TIMING_MAX_SHADERS) { ++scope->dropped; return false; }
    memset(state, 0, sizeof(*state));
+   state->scope = scope;
    state->id = ordinal;
    state->start_ns = pco_timing_now();
-   if (!state->start_ns) return false;
+   if (!state->start_ns) { ++scope->errors; return false; }
    pco_timing_current = state;
    return true;
 }
@@ -56,16 +83,19 @@ void pco_timing_record(const char *name, uint64_t start)
 {
    struct pco_timing_state *state = pco_timing_current;
    uint64_t end = pco_timing_now();
-   if (!state || !start || end < start) return;
+   if (!state) return;
+   if (!start || !end || end < start) { ++state->errors; return; }
    unsigned i = 0;
    while (i < state->used && strcmp(name, state->entries[i].name)) ++i;
    if (i == state->used) {
-      if (i == 64) return;
+      if (i == PCO_TIMING_MAX_PASSES) { ++state->errors; return; }
       state->entries[i].name = name;
       ++state->used;
    }
    uint64_t delta = end - start;
-   if (UINT64_MAX - state->entries[i].elapsed_ns < delta) return;
+   if (UINT64_MAX - state->entries[i].elapsed_ns < delta || state->entries[i].calls == UINT32_MAX) {
+      ++state->errors; return;
+   }
    state->entries[i].elapsed_ns += delta;
    ++state->entries[i].calls;
 }
@@ -107,27 +137,39 @@ void pco_timing_log_boot(void)
 
 void pco_timing_finish(struct pco_timing_state *state)
 {
-   uint64_t end = pco_timing_now();
+   state->end_ns = pco_timing_now();
    pco_timing_current = NULL;
-   if (!end || end < state->start_ns) return;
+   if (!state->end_ns || state->end_ns < state->start_ns) { ++state->scope->errors; return; }
+   state->scope->shaders[state->scope->used++] = *state;
+}
+
+void pco_timing_scope_report(const struct pco_timing_scope *scope)
+{
    char line[64];
-   pco_timing_log_boot();
-   snprintf(line, sizeof(line), "PCO p%x i%x s%llx", (unsigned)getpid(), state->id,
-            (unsigned long long)state->start_ns);
+   snprintf(line, sizeof(line), "PCS p%x i%x used%x drop%x err%x", (unsigned)getpid(), scope->id,
+            scope->used, scope->dropped, scope->errors);
    pco_timing_log(line);
-   for (unsigned i = 0; i < state->used; ++i) {
-      int length = snprintf(line, sizeof(line), "PCO p%x i%x %.24s n%x t%llx", (unsigned)getpid(), state->id,
-                            state->entries[i].name, state->entries[i].calls,
-                            (unsigned long long)state->entries[i].elapsed_ns);
-      if (length >= 0 && (size_t)length < sizeof(line)) { pco_timing_log(line); continue; }
-      snprintf(line, sizeof(line), "PCN p%x i%x k%x %.24s", (unsigned)getpid(), state->id, i, state->entries[i].name);
+   for (unsigned n = 0; n < scope->used; ++n) {
+      const struct pco_timing_state *state = &scope->shaders[n];
+      snprintf(line, sizeof(line), "PCO p%x i%x k%x s%llx", (unsigned)getpid(), scope->id, state->id,
+               (unsigned long long)state->start_ns);
       pco_timing_log(line);
-      snprintf(line, sizeof(line), "PCV p%x i%x k%x n%x t%llx", (unsigned)getpid(), state->id, i,
-               state->entries[i].calls, (unsigned long long)state->entries[i].elapsed_ns);
+      for (unsigned i = 0; i < state->used; ++i) {
+         int length = snprintf(line, sizeof(line), "PCO p%x i%x k%x %.24s n%x t%llx", (unsigned)getpid(), scope->id,
+                               state->id, state->entries[i].name, state->entries[i].calls,
+                               (unsigned long long)state->entries[i].elapsed_ns);
+         if (length >= 0 && (size_t)length < sizeof(line)) { pco_timing_log(line); continue; }
+         snprintf(line, sizeof(line), "PCN p%x i%x k%x x%x %.24s", (unsigned)getpid(), scope->id, state->id, i,
+                  state->entries[i].name);
+         pco_timing_log(line);
+         snprintf(line, sizeof(line), "PCV p%x i%x k%x x%x n%x t%llx", (unsigned)getpid(), scope->id, state->id, i,
+                  state->entries[i].calls, (unsigned long long)state->entries[i].elapsed_ns);
+         pco_timing_log(line);
+      }
+      snprintf(line, sizeof(line), "PCO p%x i%x k%x e%llx err%x", (unsigned)getpid(), scope->id, state->id,
+               (unsigned long long)state->end_ns, state->errors);
       pco_timing_log(line);
    }
-   snprintf(line, sizeof(line), "PCO p%x i%x e%llx", (unsigned)getpid(), state->id, (unsigned long long)end);
-   pco_timing_log(line);
 }
 
 /**

@@ -1,38 +1,20 @@
 #!/usr/bin/env python3
-"""Compile actual pipeline timing gate with a mock output sink."""
+"""Check the actual pipeline call sites, recursion guard and cache claims."""
 from pathlib import Path
-import subprocess
-import tempfile
+import re
 root=Path(__file__).resolve().parents[4]
 s=(root/'src/imagination/vulkan/pvr_arch_pipeline.c').read_text()
-body=s[s.index('/* Bounded wall-time samples;'):s.index('/*****************************************************************************\n   PDS functions')]
-for name in ('pvr_compute_pipeline_create','pvr_graphics_pipeline_create'):
-    at=s.index('const VkResult local_result =\n         '+name)
-    assert 'pvr_timing_begin' in s[at-160:at]
-    assert 'pvr_timing_end' in s[at:at+450]
-program='''#define _POSIX_C_SOURCE 200809L
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <assert.h>
-typedef int VkResult;
-static unsigned lines; static uint64_t now;
-static uint64_t pco_timing_now(void){return ++now;}
-static void pco_timing_log(const char *s){assert(strlen(s)<64);++lines;}
-static void pco_timing_log_boot(void){++lines;}
-'''+body+'''
-int main(void){unsigned id;uint64_t start;
- unsetenv("PVR_PIPELINE_TIMING"); assert(!pvr_timing_begin(&id,&start,'g') && !now);
- setenv("PVR_PIPELINE_TIMING","01",1); assert(!pvr_timing_begin(&id,&start,'g') && !now);
- setenv("PVR_PIPELINE_TIMING","1",1);
- for(unsigned n=0;n<520;n++) if(pvr_timing_begin(&id,&start,'g')) {assert(id%64==0 && id<512);pvr_timing_end(id,start,-7,'g');}
- assert(lines==24 && now==16);return 0;}
-'''
-with tempfile.TemporaryDirectory() as tmp:
- p=Path(tmp)/'test.c';e=Path(tmp)/'test';p.write_text(program)
- subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',str(p),'-o',str(e)],check=True)
- subprocess.run([str(e)],check=True)
-print('PASS: both pipeline entry points, strict gate, clock and bounded sample output')
+for name,kind in [('pvr_compute_pipeline_create','c'),('pvr_graphics_pipeline_create','g')]:
+ at=s.index('const VkResult local_result =\n         '+name)
+ assert f"pvr_timing_begin(&timing_sample, '{kind}')" in s[at-250:at]
+ assert f"pvr_timing_end(&timing_sample, local_result, '{kind}')" in s[at:at+500]
+ assert 'if (!timing && outer_scope) pco_timing_scope_current = NULL;' in s[at-300:at]
+ assert 'else if (outer_scope) pco_timing_scope_current = outer_scope;' in s[at:at+600]
+for name in ('pvr_compute_pipeline_compile','pvr_graphics_pipeline_compile'):
+ at=s.index(name+'(');first=s.index('{',at);depth=1;end=first+1
+ while depth:
+  depth+=(s[end]=='{')-(s[end]=='}');end+=1
+ assert not re.search(r'\bcache\b',s[first:end]),name
+assert 'pvr_cache=not_queried' in s and 'cache=hit' not in s and 'cache=miss' not in s
+assert 'pco_timing_scope_report(sample->scope)' in s
+print('PASS: both call sites, nested scope restoration, no PVR pipeline cache lookup and deferred report')

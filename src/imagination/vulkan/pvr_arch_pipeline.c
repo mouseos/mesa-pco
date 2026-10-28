@@ -78,30 +78,51 @@
 #include "vulkan/runtime/vk_pipeline.h"
 #include "vulkan/vulkan_core.h"
 
-/* Bounded wall-time samples; no shader data is captured. */
-static unsigned pvr_timing_count;
-static bool pvr_timing_begin(unsigned *id, uint64_t *start, char kind)
+/* Bounded wall-time samples; no shader data is captured. PCO reports are
+ * buffered until after pipeline creation, so their UART I/O is not timed. */
+struct pvr_timing_sample {
+   struct pco_timing_scope *scope, *previous;
+   uint64_t tid, start;
+   unsigned id;
+};
+static bool pvr_timing_begin(struct pvr_timing_sample *sample, char kind)
 {
-   const char *enabled = getenv("PVR_PIPELINE_TIMING");
-   if (!enabled || strcmp(enabled, "1")) return false;
-   unsigned n = __atomic_fetch_add(&pvr_timing_count, 1, __ATOMIC_RELAXED);
-   if (n >= 512 || n % 64) return false;
-   *start = pco_timing_now();
-   *id = n;
-   if (!*start) return false;
+   if (!pco_timing_claim(&sample->id)) return false;
+   sample->tid = pco_timing_tid();
+   sample->scope = calloc(1, sizeof(*sample->scope));
+   sample->previous = pco_timing_scope_current;
+   if (sample->scope) { sample->scope->id = sample->id; sample->scope->tid = sample->tid; }
+   uint64_t pre = pco_timing_now();
    char line[64];
    pco_timing_log_boot();
-   snprintf(line, sizeof(line), "PL p%x i%x %c s%llx", (unsigned)getpid(), n, kind, (unsigned long long)*start);
+   snprintf(line, sizeof(line), "PL p%x i%x t%llx %c pre%llx", (unsigned)getpid(), sample->id,
+            (unsigned long long)sample->tid, kind, (unsigned long long)pre);
    pco_timing_log(line);
+   sample->start = pco_timing_now();
+   if (!sample->start) { free(sample->scope); return false; }
+   pco_timing_scope_current = sample->scope;
    return true;
 }
-static void pvr_timing_end(unsigned id, uint64_t start, VkResult result, char kind)
+static void pvr_timing_end(struct pvr_timing_sample *sample, VkResult result, char kind)
 {
    uint64_t end = pco_timing_now();
-   if (!end || end < start) return;
+   pco_timing_scope_current = sample->previous;
    char line[64];
-   snprintf(line, sizeof(line), "PL p%x i%x %c e%llx r%x cache=?", (unsigned)getpid(), id, kind, (unsigned long long)end, (unsigned)result);
-   pco_timing_log(line);
+   if (!end || end < sample->start) {
+      snprintf(line, sizeof(line), "PL p%x i%x clock_error", (unsigned)getpid(), sample->id);
+      pco_timing_log(line);
+   } else {
+      snprintf(line, sizeof(line), "PL p%x i%x %c s%llx", (unsigned)getpid(), sample->id, kind,
+               (unsigned long long)sample->start);
+      pco_timing_log(line);
+      snprintf(line, sizeof(line), "PL p%x i%x %c e%llx r%x", (unsigned)getpid(), sample->id, kind,
+               (unsigned long long)end, (unsigned)result);
+      pco_timing_log(line);
+      snprintf(line, sizeof(line), "PL p%x i%x pvr_cache=not_queried", (unsigned)getpid(), sample->id);
+      pco_timing_log(line);
+   }
+   if (sample->scope) { pco_timing_scope_report(sample->scope); free(sample->scope); }
+   else { snprintf(line, sizeof(line), "PCS p%x i%x allocation_failed", (unsigned)getpid(), sample->id); pco_timing_log(line); }
 }
 
 /*****************************************************************************
@@ -1272,15 +1293,18 @@ VkResult PVR_PER_ARCH(CreateComputePipelines)(
    VkResult result = VK_SUCCESS;
 
    for (uint32_t i = 0; i < createInfoCount; i++) {
-      unsigned timing_id = 0; uint64_t timing_start = 0;
-      bool timing = pvr_timing_begin(&timing_id, &timing_start, 'c');
+      struct pvr_timing_sample timing_sample = {0};
+      struct pco_timing_scope *outer_scope = pco_timing_scope_current;
+      bool timing = pvr_timing_begin(&timing_sample, 'c');
+      if (!timing && outer_scope) pco_timing_scope_current = NULL;
       const VkResult local_result =
          pvr_compute_pipeline_create(device,
                                      cache,
                                      &pCreateInfos[i],
                                      pAllocator,
                                      &pPipelines[i]);
-      if (timing) pvr_timing_end(timing_id, timing_start, local_result, 'c');
+      if (timing) pvr_timing_end(&timing_sample, local_result, 'c');
+      else if (outer_scope) pco_timing_scope_current = outer_scope;
       if (local_result != VK_SUCCESS) {
          result = local_result;
          pPipelines[i] = VK_NULL_HANDLE;
@@ -3709,15 +3733,18 @@ VkResult PVR_PER_ARCH(CreateGraphicsPipelines)(
    VkResult result = VK_SUCCESS;
 
    for (uint32_t i = 0; i < createInfoCount; i++) {
-      unsigned timing_id = 0; uint64_t timing_start = 0;
-      bool timing = pvr_timing_begin(&timing_id, &timing_start, 'g');
+      struct pvr_timing_sample timing_sample = {0};
+      struct pco_timing_scope *outer_scope = pco_timing_scope_current;
+      bool timing = pvr_timing_begin(&timing_sample, 'g');
+      if (!timing && outer_scope) pco_timing_scope_current = NULL;
       const VkResult local_result =
          pvr_graphics_pipeline_create(device,
                                       cache,
                                       &pCreateInfos[i],
                                       pAllocator,
                                       &pPipelines[i]);
-      if (timing) pvr_timing_end(timing_id, timing_start, local_result, 'g');
+      if (timing) pvr_timing_end(&timing_sample, local_result, 'g');
+      else if (outer_scope) pco_timing_scope_current = outer_scope;
       if (local_result != VK_SUCCESS) {
          result = local_result;
          pPipelines[i] = VK_NULL_HANDLE;
