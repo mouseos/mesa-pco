@@ -32,6 +32,23 @@ with tempfile.TemporaryDirectory() as d:
  for tag in ('QT','XT'):
   subprocess.run(['cc','-std=c11','-O2','-Wall','-Wextra','-Werror','-DPVR_QUEUE_TIMING_TAG="'+tag+'"','-I',str(root/'src/imagination'),'-I',str(root/'src/imagination/vulkan'),str(p),'-o',str(e)],check=True)
   subprocess.run([str(e)],check=True)
+ mach=p.parent/'mach';mach.mkdir();(mach/'mach_time.h').write_text('#include <stdint.h>\nuint64_t mach_absolute_time(void);\n')
+ apple=r'''#define _POSIX_C_SOURCE 200809L
+#include <assert.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+static uint64_t now=1;static int mb,me;
+uint64_t pco_timing_now(void){return now;}
+uint64_t mach_absolute_time(void){return now+100;}
+uint64_t pco_timing_tid(void){return 1;}
+void pco_timing_log(const char*s){if(strstr(s," mb65"))mb++;if(strstr(s," me3b9aca66"))me++;}
+#include "pvr_queue_timing.h"
+int main(void){setenv("PVR_QUEUE_TIMING","1",1);struct pvr_queue_timing t={0};pvr_queue_timing_begin(&t);now=1000000002;pvr_queue_timing_end(&t,0);assert(mb==1&&me==1);return 0;}
+'''
+ p.write_text(apple)
+ subprocess.run(['cc','-std=c11','-D__APPLE__','-Wall','-Wextra','-Werror','-I',str(p.parent),'-I',str(root/'src/imagination'),'-I',str(root/'src/imagination/vulkan'),str(p),'-o',str(e)],check=True)
+ subprocess.run([str(e)],check=True)
 s=(root/'src/imagination/vulkan/pvr_arch_queue.c').read_text();a=s.rindex('static VkResult pvr_driver_queue_submit(');b=s.index('VkResult PVR_PER_ARCH(QueueBindSparse)',a);s=s[a:b]
 assert all('pvr_queue_timing_step(&timing, '+str(n)+')' in s for n in range(1,5))
 assert s.count('goto timing_done;')==3 and 'return result;' in s

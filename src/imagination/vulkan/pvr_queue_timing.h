@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach/mach_time.h>
+#endif
 #include "pco/pco_timing.h"
 
 /* Emit after the driver submit callback returns. Each compiled architecture
@@ -17,6 +20,9 @@
 #endif
 struct pvr_queue_timing {
    uint64_t stamp[5], kind_ns[6], transfer_ns[3];
+#ifdef __APPLE__
+   uint64_t mach_begin;
+#endif
    unsigned kind_count[6], transfer_count[3], phase;
    bool enabled, kind_error;
 };
@@ -26,7 +32,12 @@ static inline void pvr_queue_timing_begin(struct pvr_queue_timing *t)
    const char *flag = getenv("PVR_QUEUE_TIMING");
    t->enabled = flag && !strcmp(flag, "1") &&
       __atomic_load_n(&pvr_queue_timing_reports, __ATOMIC_RELAXED) < 4;
-   if (t->enabled) t->stamp[0] = pco_timing_now();
+   if (t->enabled) {
+      t->stamp[0] = pco_timing_now();
+#ifdef __APPLE__
+      t->mach_begin = mach_absolute_time();
+#endif
+   }
 }
 static inline void pvr_queue_timing_transfer_end(struct pvr_queue_timing *t,
                                                   unsigned part, uint64_t start)
@@ -66,6 +77,9 @@ static inline void pvr_queue_timing_end(struct pvr_queue_timing *t, int result)
 {
    if (!t->enabled) return;
    const uint64_t end = pco_timing_now();
+#ifdef __APPLE__
+   const uint64_t mach_end = mach_absolute_time();
+#endif
    bool valid = t->stamp[0] && end >= t->stamp[0];
    for (unsigned i=1; i<=t->phase; i++)
       valid = valid && t->stamp[i] >= t->stamp[i-1] && t->stamp[i] <= end;
@@ -89,6 +103,14 @@ static inline void pvr_queue_timing_end(struct pvr_queue_timing *t, int result)
    snprintf(line,sizeof(line),PVR_QUEUE_TIMING_TAG " p%x i%x end%llx",(unsigned)getpid(),id,
             (unsigned long long)end);
    pco_timing_log(line);
+#ifdef __APPLE__
+   snprintf(line,sizeof(line),PVR_QUEUE_TIMING_TAG " p%x i%x mb%llx",(unsigned)getpid(),id,
+            (unsigned long long)t->mach_begin);
+   pco_timing_log(line);
+   snprintf(line,sizeof(line),PVR_QUEUE_TIMING_TAG " p%x i%x me%llx",(unsigned)getpid(),id,
+            (unsigned long long)mach_end);
+   pco_timing_log(line);
+#endif
    for (unsigned i=1; i<=t->phase; i++) {
       snprintf(line,sizeof(line),PVR_QUEUE_TIMING_TAG " p%x i%x s%x n%llx",(unsigned)getpid(),id,i,
                (unsigned long long)(t->stamp[i]-t->stamp[i-1]));
