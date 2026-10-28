@@ -112,7 +112,7 @@ void pco_timing_finish(struct pco_timing_state *state)
    if (!end || end < state->start_ns) return;
    char line[64];
    pco_timing_log_boot();
-   snprintf(line, sizeof(line), "PCO pid=%d id=%u t=%llu", (int)getpid(), state->id,
+   snprintf(line, sizeof(line), "PCO p%x i%x s%llx", (unsigned)getpid(), state->id,
             (unsigned long long)state->start_ns);
    pco_timing_log(line);
    for (unsigned i = 0; i < state->used; ++i) {
@@ -126,7 +126,7 @@ void pco_timing_finish(struct pco_timing_state *state)
                state->entries[i].calls, (unsigned long long)state->entries[i].elapsed_ns);
       pco_timing_log(line);
    }
-   snprintf(line, sizeof(line), "PCO p%d i%u end=%llu", (int)getpid(), state->id, (unsigned long long)end);
+   snprintf(line, sizeof(line), "PCO p%x i%x e%llx", (unsigned)getpid(), state->id, (unsigned long long)end);
    pco_timing_log(line);
 }
 

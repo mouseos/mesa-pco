@@ -91,7 +91,7 @@ static bool pvr_timing_begin(unsigned *id, uint64_t *start, char kind)
    if (!*start) return false;
    char line[64];
    pco_timing_log_boot();
-   snprintf(line, sizeof(line), "PL p%d i%u %c start=%llu", (int)getpid(), n, kind, (unsigned long long)*start);
+   snprintf(line, sizeof(line), "PL p%x i%x %c s%llx", (unsigned)getpid(), n, kind, (unsigned long long)*start);
    pco_timing_log(line);
    return true;
 }
@@ -100,7 +100,7 @@ static void pvr_timing_end(unsigned id, uint64_t start, VkResult result, char ki
    uint64_t end = pco_timing_now();
    if (!end || end < start) return;
    char line[64];
-   snprintf(line, sizeof(line), "PL p%d i%u %c end=%llu r=%d cache=?", (int)getpid(), id, kind, (unsigned long long)end, (int)result);
+   snprintf(line, sizeof(line), "PL p%x i%x %c e%llx r%x cache=?", (unsigned)getpid(), id, kind, (unsigned long long)end, (unsigned)result);
    pco_timing_log(line);
 }
 
