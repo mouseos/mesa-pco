@@ -30,6 +30,7 @@
  */
 
 #include "pvr_queue.h"
+#include "pvr_queue_timing.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -1057,19 +1058,25 @@ static VkResult pvr_driver_queue_submit(struct vk_queue *queue,
    struct pvr_queue *driver_queue = container_of(queue, struct pvr_queue, vk);
    struct pvr_device *device = driver_queue->device;
    VkResult result;
+   struct pvr_queue_timing timing = {0};
+   pvr_queue_timing_begin(&timing);
 
    result = pvr_clear_last_submits_syncs(driver_queue);
+   pvr_queue_timing_step(&timing, 1);
    if (result != VK_SUCCESS)
-      return result;
+      goto timing_done;
 
    if (submit->wait_count) {
       result = pvr_process_queue_waits(driver_queue,
                                        submit->waits,
                                        submit->wait_count);
-      if (result != VK_SUCCESS)
-         return result;
+      if (result != VK_SUCCESS) {
+         pvr_queue_timing_step(&timing, 2);
+         goto timing_done;
+      }
    }
 
+   pvr_queue_timing_step(&timing, 2);
    struct pvr_suspended_data suspended_data = {0};
 
    for (uint32_t i = 0U; i < submit->command_buffer_count; i++) {
@@ -1078,19 +1085,23 @@ static VkResult pvr_driver_queue_submit(struct vk_queue *queue,
          driver_queue,
          container_of(submit->command_buffers[i], struct pvr_cmd_buffer, vk),
          &suspended_data);
-      if (result != VK_SUCCESS)
-         return result;
+      if (result != VK_SUCCESS) {
+         pvr_queue_timing_step(&timing, 3);
+         goto timing_done;
+      }
    }
 
+   pvr_queue_timing_step(&timing, 3);
    assert(suspended_data.rts == NULL && "suspended graphics job never resumed");
 
    result = pvr_process_queue_signals(driver_queue,
                                       submit->signals,
                                       submit->signal_count);
-   if (result != VK_SUCCESS)
-      return result;
+   pvr_queue_timing_step(&timing, 4);
 
-   return VK_SUCCESS;
+timing_done:
+   pvr_queue_timing_end(&timing, result);
+   return result;
 }
 
 VkResult PVR_PER_ARCH(QueueBindSparse)(VkQueue _queue,
