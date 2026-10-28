@@ -37,6 +37,8 @@
 #include "pvr_job_context.h"
 #include "pvr_job_transfer.h"
 #include "pvr_physical_device.h"
+#define PVR_QUEUE_TIMING_TAG "XT"
+#include "pvr_queue_timing.h"
 #include "pvr_tex_state.h"
 #include "pvr_transfer_frag_store.h"
 #include "pvr_types.h"
@@ -5955,7 +5957,9 @@ static VkResult pvr_queue_transfer(struct pvr_transfer_ctx *ctx,
    struct pvr_transfer_submit submit = { 0U };
    bool finished = false;
    uint32_t pass = 0U;
-   VkResult result;
+   VkResult result = VK_SUCCESS;
+   struct pvr_queue_timing timing = {0};
+   pvr_queue_timing_begin(&timing);
 
    /* Transfer queue might decide to do a blit in multiple passes. When the
     * prepare doesn't set the finished flag this code will keep calling the
@@ -5985,8 +5989,10 @@ static VkResult pvr_queue_transfer(struct pvr_transfer_ctx *ctx,
       memset(prep_data, 0U, sizeof(*prep_data));
 
       if (pass == 0U) {
-         if (!pvr_3d_validate_addr(transfer_cmd))
-            return vk_error(ctx->device, VK_ERROR_FEATURE_NOT_PRESENT);
+         if (!pvr_3d_validate_addr(transfer_cmd)) {
+            result = vk_error(ctx->device, VK_ERROR_FEATURE_NOT_PRESENT);
+            goto timing_done;
+         }
       } else {
          /* Transfer queue workarounds could use more than one pass with 3D
           * path.
@@ -5994,6 +6000,7 @@ static VkResult pvr_queue_transfer(struct pvr_transfer_ctx *ctx,
          prep_data->state = prev_prep_data->state;
       }
 
+      const uint64_t prepare_start = pvr_queue_timing_kind_begin(&timing);
       if (transfer_cmd->flags & PVR_TRANSFER_CMD_FLAGS_FAST2D) {
          result =
             pvr_3d_clip_blit(ctx, transfer_cmd, prep_data, pass, &finished);
@@ -6001,17 +6008,20 @@ static VkResult pvr_queue_transfer(struct pvr_transfer_ctx *ctx,
          result =
             pvr_3d_copy_blit(ctx, transfer_cmd, prep_data, pass, &finished);
       }
+      pvr_queue_timing_kind_end(&timing, 1, prepare_start);
       if (result != VK_SUCCESS)
-         return result;
+         goto timing_done;
 
       /* Submit if we have finished the blit or if we are out of prepares. */
       if (finished || submit.prep_count == ARRAY_SIZE(submit.prep_array)) {
+         const uint64_t submit_start = pvr_queue_timing_kind_begin(&timing);
          result = pvr_submit_transfer(ctx,
                                       &submit,
                                       wait,
                                       finished ? signal_sync : NULL);
+         pvr_queue_timing_kind_end(&timing, 2, submit_start);
          if (result != VK_SUCCESS)
-            return result;
+            goto timing_done;
 
          /* Check if we need to reset prep_count. */
          if (submit.prep_count == ARRAY_SIZE(submit.prep_array))
@@ -6021,7 +6031,9 @@ static VkResult pvr_queue_transfer(struct pvr_transfer_ctx *ctx,
       pass++;
    }
 
-   return VK_SUCCESS;
+timing_done:
+   pvr_queue_timing_end(&timing, result);
+   return result;
 }
 
 VkResult pvr_arch_transfer_job_submit(struct pvr_transfer_ctx *ctx,

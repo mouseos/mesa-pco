@@ -769,7 +769,8 @@ struct pvr_suspended_data {
 static VkResult pvr_process_cmd_buffer(struct pvr_device *device,
                                        struct pvr_queue *queue,
                                        struct pvr_cmd_buffer *cmd_buffer,
-                                       struct pvr_suspended_data *suspended_data)
+                                       struct pvr_suspended_data *suspended_data,
+                                       struct pvr_queue_timing *timing)
 {
    VkResult result;
 
@@ -777,6 +778,7 @@ static VkResult pvr_process_cmd_buffer(struct pvr_device *device,
                              sub_cmd,
                              &cmd_buffer->sub_cmds,
                              link) {
+      const uint64_t sub_start = pvr_queue_timing_kind_begin(timing);
       switch (sub_cmd->type) {
       case PVR_SUB_CMD_TYPE_GRAPHICS: {
          /* If the fragment job utilizes queries, for data integrity
@@ -890,6 +892,7 @@ static VkResult pvr_process_cmd_buffer(struct pvr_device *device,
          result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
       }
 
+      pvr_queue_timing_kind_end(timing, (unsigned)sub_cmd->type, sub_start);
       if (result != VK_SUCCESS)
          return result;
 
@@ -1084,7 +1087,8 @@ static VkResult pvr_driver_queue_submit(struct vk_queue *queue,
          device,
          driver_queue,
          container_of(submit->command_buffers[i], struct pvr_cmd_buffer, vk),
-         &suspended_data);
+         &suspended_data,
+         &timing);
       if (result != VK_SUCCESS) {
          pvr_queue_timing_step(&timing, 3);
          goto timing_done;
