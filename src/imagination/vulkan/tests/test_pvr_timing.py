@@ -25,10 +25,10 @@ static void pco_timing_log(const char *s){assert(strlen(s)<64);++lines;}
 static void pco_timing_log_boot(void){++lines;}
 '''+body+'''
 int main(void){unsigned id;uint64_t start;
- unsetenv("PVR_PIPELINE_TIMING"); assert(!pvr_timing_begin(&id,&start) && !now);
- setenv("PVR_PIPELINE_TIMING","01",1); assert(!pvr_timing_begin(&id,&start) && !now);
+ unsetenv("PVR_PIPELINE_TIMING"); assert(!pvr_timing_begin(&id,&start,'g') && !now);
+ setenv("PVR_PIPELINE_TIMING","01",1); assert(!pvr_timing_begin(&id,&start,'g') && !now);
  setenv("PVR_PIPELINE_TIMING","1",1);
- for(unsigned n=0;n<520;n++) if(pvr_timing_begin(&id,&start)) {assert(id%64==0 && id<512);pvr_timing_end(id,start,-7,'g');}
+ for(unsigned n=0;n<520;n++) if(pvr_timing_begin(&id,&start,'g')) {assert(id%64==0 && id<512);pvr_timing_end(id,start,-7,'g');}
  assert(lines==24 && now==16);return 0;}
 '''
 with tempfile.TemporaryDirectory() as tmp:

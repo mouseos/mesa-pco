@@ -80,7 +80,7 @@
 
 /* Bounded wall-time samples; no shader data is captured. */
 static unsigned pvr_timing_count;
-static bool pvr_timing_begin(unsigned *id, uint64_t *start)
+static bool pvr_timing_begin(unsigned *id, uint64_t *start, char kind)
 {
    const char *enabled = getenv("PVR_PIPELINE_TIMING");
    if (!enabled || strcmp(enabled, "1")) return false;
@@ -88,17 +88,19 @@ static bool pvr_timing_begin(unsigned *id, uint64_t *start)
    if (n >= 512 || n % 64) return false;
    *start = pco_timing_now();
    *id = n;
-   return *start != 0;
+   if (!*start) return false;
+   char line[64];
+   pco_timing_log_boot();
+   snprintf(line, sizeof(line), "PL p%d i%u %c start=%llu", (int)getpid(), n, kind, (unsigned long long)*start);
+   pco_timing_log(line);
+   return true;
 }
 static void pvr_timing_end(unsigned id, uint64_t start, VkResult result, char kind)
 {
    uint64_t end = pco_timing_now();
    if (!end || end < start) return;
    char line[64];
-   pco_timing_log_boot();
-   snprintf(line, sizeof(line), "PL p%d i%u %c start=%llu", (int)getpid(), id, kind, (unsigned long long)start);
-   pco_timing_log(line);
-   snprintf(line, sizeof(line), "PL p%d i%u end=%llu r=%d cache=?", (int)getpid(), id, (unsigned long long)end, (int)result);
+   snprintf(line, sizeof(line), "PL p%d i%u %c end=%llu r=%d cache=?", (int)getpid(), id, kind, (unsigned long long)end, (int)result);
    pco_timing_log(line);
 }
 
@@ -1271,7 +1273,7 @@ VkResult PVR_PER_ARCH(CreateComputePipelines)(
 
    for (uint32_t i = 0; i < createInfoCount; i++) {
       unsigned timing_id = 0; uint64_t timing_start = 0;
-      bool timing = pvr_timing_begin(&timing_id, &timing_start);
+      bool timing = pvr_timing_begin(&timing_id, &timing_start, 'c');
       const VkResult local_result =
          pvr_compute_pipeline_create(device,
                                      cache,
@@ -3708,7 +3710,7 @@ VkResult PVR_PER_ARCH(CreateGraphicsPipelines)(
 
    for (uint32_t i = 0; i < createInfoCount; i++) {
       unsigned timing_id = 0; uint64_t timing_start = 0;
-      bool timing = pvr_timing_begin(&timing_id, &timing_start);
+      bool timing = pvr_timing_begin(&timing_id, &timing_start, 'g');
       const VkResult local_result =
          pvr_graphics_pipeline_create(device,
                                       cache,
