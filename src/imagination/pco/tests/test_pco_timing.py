@@ -37,7 +37,7 @@ int main(void) {
  unsetenv("PVR_PIPELINE_TIMING");assert(!pvr_timing_begin(&sample,'g') && tick==1 && nlines==0);
  setenv("PVR_PIPELINE_TIMING","01",1);assert(!pvr_timing_begin(&sample,'g') && tick==1 && nlines==0);
  setenv("PVR_PIPELINE_TIMING","1",1);assert(pvr_timing_begin(&sample,'g'));
- assert(nlines==2 && sample.scope && sample.tid && sample.id==0);
+ assert(nlines==2 && sample.scope && sample.tid && sample.id==256);
  uint64_t begin=sample.start;assert(begin>200);
  for(unsigned i=0;i<5;i++) {
   bool active=pco_timing_begin(&shader);assert(active==(i<4));
@@ -46,11 +46,11 @@ int main(void) {
  }
  assert(nlines==2 && sample.scope->used==4 && sample.scope->dropped==1);
  assert(sample.scope->shaders[0].entries[0].calls==2);
- unsigned ignored=0;for(int i=0;i<63;i++)assert(!pco_timing_claim(&ignored));
- struct pvr_timing_sample child={0};assert(pvr_timing_begin(&child,'c') && child.id==64);
+ unsigned ignored=0;assert(!pco_timing_claim('x', &ignored));
+ struct pvr_timing_sample child={0};assert(pvr_timing_begin(&child,'c') && child.id==0);
  assert(pco_timing_begin(&shader));uint64_t ct=pco_timing_now();pco_timing_record("child_pass",ct);pco_timing_finish(&shader);
  pvr_timing_end(&child,0,'c');assert(nlines==2 && pco_timing_scope_current==sample.scope);
- for(int i=0;i<63;i++)assert(!pco_timing_claim(&ignored));
+ for(int i=0;i<63;i++)assert(!pco_timing_claim('c', &ignored));
  fail_clock_call=clock_calls+2;struct pvr_timing_sample bad={0};assert(!pvr_timing_begin(&bad,'c'));
  assert(nlines==2 && sample.scope->deferred_used==2);
  pvr_timing_end(&sample,-7,'g');assert(pco_timing_scope_current==NULL && !pco_timing_defer_root);
@@ -58,17 +58,17 @@ int main(void) {
  assert(strstr(output,"pvr_cache=not_queried"));assert(strstr(output,"drop1"));
  assert(strstr(output,"sample_pass"));assert(strstr(output," t"));
  assert(nlines==28); /* root records, deferred child records and start-error records */
- for(int i=0;i<63;i++)assert(!pco_timing_claim(&ignored));
- fail_alloc=1;assert(pvr_timing_begin(&sample,'c') && !sample.scope);
- pvr_timing_end(&sample,0,'c');assert(strstr(output,"allocation_failed"));
- fail_alloc=0;pco_timing_sequence=0;fail_clock_call=0;assert(pvr_timing_begin(&sample,'g'));
+ pco_timing_sequence[1]=0;
+ fail_alloc=1;assert(pvr_timing_begin(&sample,'g') && !sample.scope);
+ pvr_timing_end(&sample,0,'g');assert(strstr(output,"allocation_failed"));
+ fail_alloc=0;pco_timing_sequence[0]=pco_timing_sequence[1]=0;fail_clock_call=0;assert(pvr_timing_begin(&sample,'g'));
  assert(pco_timing_begin(&shader));sample.scope->used=PCO_TIMING_MAX_SHADERS;
  pco_timing_finish(&shader);assert(sample.scope->errors==1);sample.scope->used=0;
  pvr_timing_end(&sample,0,'g');
- pco_timing_sequence=0;fail_clock_call=clock_calls+2;
+ pco_timing_sequence[0]=pco_timing_sequence[1]=0;fail_clock_call=clock_calls+2;
  assert(!pvr_timing_begin(&sample,'g'));assert(strstr(output,"clock_error_start"));
  assert(!pco_timing_scope_current && !pco_timing_defer_root);
- pco_timing_sequence=0;fail_clock_call=0;assert(pvr_timing_begin(&sample,'g'));
+ pco_timing_sequence[0]=pco_timing_sequence[1]=0;fail_clock_call=0;assert(pvr_timing_begin(&sample,'g'));
  fail_clock_call=clock_calls+1;pvr_timing_end(&sample,0,'g');assert(strstr(output,"clock_error_end"));
  assert(!pco_timing_scope_current && !pco_timing_defer_root);
  return 0;
@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory() as tmp:
  import re
  starts=re.findall(r'PL p([0-9a-f]+) i([0-9a-f]+) t([0-9a-f]+) g pre',out)
  passes=re.findall(r'PCO p([0-9a-f]+) i([0-9a-f]+) k0 thread_pass',out)
- assert len(starts)==4 and {int(x[1],16) for x in starts}=={0,64,128,192},out
- assert len(passes)==4 and {(x[0],x[1]) for x in passes}=={(x[0],x[1]) for x in starts},out
+ assert len(starts)==2 and {int(x[1],16) for x in starts}=={256,320},out
+ assert len(passes)==2 and {(x[0],x[1]) for x in passes}=={(x[0],x[1]) for x in starts},out
  assert all(int(x[2],16)!=0 for x in starts)
 print('PASS: independent simultaneous threads preserve pipeline to PCO identities')

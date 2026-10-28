@@ -32,7 +32,7 @@ extern _Thread_local struct pco_timing_state *pco_timing_current;
 extern _Thread_local struct pco_timing_scope *pco_timing_scope_current;
 extern _Thread_local struct pco_timing_scope *pco_timing_defer_root;
 extern _Thread_local unsigned pco_timing_pipeline_depth;
-bool pco_timing_claim(unsigned *id);
+bool pco_timing_claim(char kind, unsigned *id);
 bool pco_timing_begin(struct pco_timing_state *state);
 uint64_t pco_timing_now(void);
 uint64_t pco_timing_tid(void);

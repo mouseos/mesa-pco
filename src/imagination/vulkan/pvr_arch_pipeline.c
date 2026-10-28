@@ -98,7 +98,7 @@ static void pvr_timing_defer(struct pco_timing_scope *root,
 }
 static bool pvr_timing_begin(struct pvr_timing_sample *sample, char kind)
 {
-   if (!pco_timing_claim(&sample->id)) return false;
+   if (!pco_timing_claim(kind, &sample->id)) return false;
    sample->tid = pco_timing_tid();
    sample->scope = calloc(1, sizeof(*sample->scope));
    sample->previous = pco_timing_scope_current;

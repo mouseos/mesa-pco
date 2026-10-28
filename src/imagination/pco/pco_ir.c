@@ -33,7 +33,7 @@ _Thread_local struct pco_timing_state *pco_timing_current;
 _Thread_local struct pco_timing_scope *pco_timing_scope_current;
 _Thread_local struct pco_timing_scope *pco_timing_defer_root;
 _Thread_local unsigned pco_timing_pipeline_depth;
-static unsigned pco_timing_sequence;
+static unsigned pco_timing_sequence[2];
 
 uint64_t pco_timing_now(void)
 {
@@ -52,17 +52,20 @@ uint64_t pco_timing_tid(void)
 #endif
 }
 
-bool pco_timing_claim(unsigned *id)
+bool pco_timing_claim(char kind, unsigned *id)
 {
    const char *enabled = getenv("PVR_PIPELINE_TIMING");
    if (!enabled || strcmp(enabled, "1")) return false;
-   unsigned value = __atomic_load_n(&pco_timing_sequence, __ATOMIC_RELAXED);
+   if (kind != 'c' && kind != 'g') return false;
+   unsigned index = kind == 'g';
+   unsigned *sequence = &pco_timing_sequence[index];
+   unsigned value = __atomic_load_n(sequence, __ATOMIC_RELAXED);
    do {
-      if (value >= 256) return false;
-   } while (!__atomic_compare_exchange_n(&pco_timing_sequence, &value, value + 1,
+      if (value >= 128) return false;
+   } while (!__atomic_compare_exchange_n(sequence, &value, value + 1,
                                           false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
    if (value % 64) return false;
-   *id = value;
+   *id = value + index * 256;
    return true;
 }
 
