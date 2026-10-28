@@ -30,6 +30,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "pco/pco_timing.h"
 #include <vulkan/vulkan.h>
 
 #include "compiler/shader_enums.h"
@@ -73,6 +77,30 @@
 #include "vk_util.h"
 #include "vulkan/runtime/vk_pipeline.h"
 #include "vulkan/vulkan_core.h"
+
+/* Bounded wall-time samples; no shader data is captured. */
+static unsigned pvr_timing_count;
+static bool pvr_timing_begin(unsigned *id, uint64_t *start)
+{
+   const char *enabled = getenv("PVR_PIPELINE_TIMING");
+   if (!enabled || strcmp(enabled, "1")) return false;
+   unsigned n = __atomic_fetch_add(&pvr_timing_count, 1, __ATOMIC_RELAXED);
+   if (n >= 512 || n % 64) return false;
+   *start = pco_timing_now();
+   *id = n;
+   return *start != 0;
+}
+static void pvr_timing_end(unsigned id, uint64_t start, VkResult result, char kind)
+{
+   uint64_t end = pco_timing_now();
+   if (!end || end < start) return;
+   char line[64];
+   pco_timing_log_boot();
+   snprintf(line, sizeof(line), "PL p%d i%u %c start=%llu", (int)getpid(), id, kind, (unsigned long long)start);
+   pco_timing_log(line);
+   snprintf(line, sizeof(line), "PL p%d i%u end=%llu r=%d cache=?", (int)getpid(), id, (unsigned long long)end, (int)result);
+   pco_timing_log(line);
+}
 
 /*****************************************************************************
    PDS functions
@@ -1242,12 +1270,15 @@ VkResult PVR_PER_ARCH(CreateComputePipelines)(
    VkResult result = VK_SUCCESS;
 
    for (uint32_t i = 0; i < createInfoCount; i++) {
+      unsigned timing_id = 0; uint64_t timing_start = 0;
+      bool timing = pvr_timing_begin(&timing_id, &timing_start);
       const VkResult local_result =
          pvr_compute_pipeline_create(device,
                                      cache,
                                      &pCreateInfos[i],
                                      pAllocator,
                                      &pPipelines[i]);
+      if (timing) pvr_timing_end(timing_id, timing_start, local_result, 'c');
       if (local_result != VK_SUCCESS) {
          result = local_result;
          pPipelines[i] = VK_NULL_HANDLE;
@@ -3676,12 +3707,15 @@ VkResult PVR_PER_ARCH(CreateGraphicsPipelines)(
    VkResult result = VK_SUCCESS;
 
    for (uint32_t i = 0; i < createInfoCount; i++) {
+      unsigned timing_id = 0; uint64_t timing_start = 0;
+      bool timing = pvr_timing_begin(&timing_id, &timing_start);
       const VkResult local_result =
          pvr_graphics_pipeline_create(device,
                                       cache,
                                       &pCreateInfos[i],
                                       pAllocator,
                                       &pPipelines[i]);
+      if (timing) pvr_timing_end(timing_id, timing_start, local_result, 'g');
       if (local_result != VK_SUCCESS) {
          result = local_result;
          pPipelines[i] = VK_NULL_HANDLE;

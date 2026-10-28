@@ -3206,6 +3206,8 @@ static inline bool pco_should_skip_pass(const char *pass)
    return comma_separated_list_contains(pco_skip_passes, pass);
 }
 
+#include "pco_timing.h"
+
 #define PCO_PASS(progress, shader, pass, ...)                 \
    do {                                                       \
       if (pco_should_skip_pass(#pass)) {                      \
@@ -3213,7 +3215,10 @@ static inline bool pco_should_skip_pass(const char *pass)
          break;                                               \
       }                                                       \
                                                               \
-      if (pass(shader, ##__VA_ARGS__)) {                      \
+      uint64_t pco_timing_start_ = pco_timing_current ? pco_timing_now() : 0; \
+      bool pco_timing_progress_ = pass(shader, ##__VA_ARGS__); \
+      if (pco_timing_current) pco_timing_record(#pass, pco_timing_start_); \
+      if (pco_timing_progress_) {                             \
          UNUSED bool _;                                       \
          progress = true;                                     \
                                                               \
