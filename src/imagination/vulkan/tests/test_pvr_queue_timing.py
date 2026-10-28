@@ -17,9 +17,9 @@ void pco_timing_log(const char *s){assert(strlen(s)<64);++lines;}
 int main(void){struct pvr_queue_timing t={0};
  unsetenv("PVR_QUEUE_TIMING");pvr_queue_timing_begin(&t);pvr_queue_timing_step(&t,1);pvr_queue_timing_end(&t,0);assert(!calls&&!lines);
  setenv("PVR_QUEUE_TIMING","1",1);t=(struct pvr_queue_timing){0};ticks=1;pvr_queue_timing_begin(&t);ticks=10;pvr_queue_timing_step(&t,1);pvr_queue_timing_end(&t,0);assert(!lines);
- for(unsigned j=0;j<4;j++){t=(struct pvr_queue_timing){0};ticks=1;pvr_queue_timing_begin(&t);for(unsigned i=1;i<=4;i++){ticks+=300000000;pvr_queue_timing_step(&t,i);}pvr_queue_timing_end(&t,0);assert(lines==6*(j+1));}
- t=(struct pvr_queue_timing){0};unsigned c=calls;pvr_queue_timing_begin(&t);pvr_queue_timing_end(&t,0);assert(calls==c&&lines==24);
- pvr_queue_timing_reports=0;t=(struct pvr_queue_timing){0};ticks=0;pvr_queue_timing_begin(&t);pvr_queue_timing_end(&t,1);assert(lines==26);
+ for(unsigned j=0;j<4;j++){t=(struct pvr_queue_timing){0};ticks=1;pvr_queue_timing_begin(&t);for(unsigned i=1;i<=4;i++){ticks+=300000000;pvr_queue_timing_step(&t,i);}pvr_queue_timing_end(&t,0);assert(lines==8*(j+1));}
+ t=(struct pvr_queue_timing){0};unsigned c=calls;pvr_queue_timing_begin(&t);pvr_queue_timing_end(&t,0);assert(calls==c&&lines==32);
+ pvr_queue_timing_reports=0;t=(struct pvr_queue_timing){0};ticks=0;pvr_queue_timing_begin(&t);pvr_queue_timing_end(&t,1);assert(lines==34);
  return 0;}
 '''
 with tempfile.TemporaryDirectory() as d:

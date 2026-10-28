@@ -48,6 +48,12 @@ static inline void pvr_queue_timing_end(struct pvr_queue_timing *t, int result)
       pco_timing_log(line);
       return;
    }
+   snprintf(line,sizeof(line),"QT p%x i%x begin%llx",(unsigned)getpid(),id,
+            (unsigned long long)t->stamp[0]);
+   pco_timing_log(line);
+   snprintf(line,sizeof(line),"QT p%x i%x end%llx",(unsigned)getpid(),id,
+            (unsigned long long)end);
+   pco_timing_log(line);
    for (unsigned i=1; i<=t->phase; i++) {
       snprintf(line,sizeof(line),"QT p%x i%x s%x n%llx",(unsigned)getpid(),id,i,
                (unsigned long long)(t->stamp[i]-t->stamp[i-1]));
