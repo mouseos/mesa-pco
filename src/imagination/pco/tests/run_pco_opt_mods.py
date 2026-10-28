@@ -15,6 +15,7 @@ commands = subprocess.check_output(['ninja', '-C', str(build), '-t', 'commands']
 cc = shlex.split(next(c for c in commands if c.endswith('/pco_opt.c')))
 link = shlex.split(next(c for c in commands if ' -o src/imagination/pco/uscgen/pco_clc ' in c))
 original = subprocess.check_output(['git', '-C', str(root), 'show', args.base + ':src/imagination/pco/pco_opt.c'])
+validator = subprocess.check_output(['git', '-C', str(root), 'show', args.base + ':src/imagination/pco/pco_validate.c'])
 modified = (root / 'src/imagination/pco/pco_opt.c').read_bytes()
 test = Path(__file__).with_name('pco_opt_mods_test.c').read_bytes()
 with tempfile.TemporaryDirectory(prefix='pco-opt-mods-') as temp:
@@ -23,15 +24,21 @@ with tempfile.TemporaryDirectory(prefix='pco-opt-mods-') as temp:
         target = d / name
         (target / 'tests').mkdir(parents=True)
         (target / 'pco_opt.c').write_bytes(source)
+        (target / 'pco_validate.c').write_bytes(validator)
         (target / 'tests/pco_opt_mods_test.c').write_bytes(test)
         replacements = {'/pco_opt.c': target / 'tests/pco_opt_mods_test.c',
                         '/pco_opt.c.o.d': target / 'test.o.d',
                         '/pco_opt.c.o': target / 'test.o'}
         compile_command = [str(next((v for k, v in replacements.items() if x.endswith(k)), x)) for x in cc]
-        subprocess.run(compile_command, cwd=build, check=True)
+        subprocess.run(compile_command + ['-UNDEBUG'], cwd=build, check=True)
         link_command = [str(target / 'runner') if x == 'src/imagination/pco/uscgen/pco_clc' else
                         str(target / 'test.o') if x.endswith('/pco_clc.c.o') else x for x in link]
         subprocess.run(link_command, cwd=build, check=True)
+    for name in ('base', 'candidate'):
+        invalid = subprocess.run([str(d / name / 'runner'), 'invalid'], capture_output=True)
+        if invalid.returncode == 0 or b'SSA source used before being defined' not in invalid.stdout:
+            raise SystemExit('FAIL: PCO SSA validator did not reject the invalid input: ' + name)
+    print('PASS: PCO SSA validator rejects an undefined source')
     expected = subprocess.check_output([str(d / 'base/runner')])
     for mode in ('normal', 'alloc', 'grow', 'grow2'):
         command = [str(d / 'candidate/runner')]

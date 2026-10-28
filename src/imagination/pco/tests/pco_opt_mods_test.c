@@ -33,6 +33,10 @@ static void *test_index_grow(struct util_dynarray *buf, size_t size)
 #define PCO_OPT_SOURCE "../pco_opt.c"
 #endif
 #include PCO_OPT_SOURCE
+#ifdef NDEBUG
+#error PCO validation requires assertions enabled
+#endif
+#include "../pco_validate.c"
 
 static pco_instr *emit(pco_func *f, pco_block *b, enum pco_op op,
                        unsigned dst, unsigned a, unsigned c, unsigned n)
@@ -50,6 +54,7 @@ static pco_instr *emit(pco_func *f, pco_block *b, enum pco_op op,
 
 int main(int argc, char **argv)
 {
+   setvbuf(stdout, NULL, _IONBF, 0);
    alloc_fail = argc > 1 && !strcmp(argv[1], "alloc");
    grow_fail = argc > 1 && !strcmp(argv[1], "grow") ? 1 :
                argc > 1 && !strcmp(argv[1], "grow2") ? 2 : 0;
@@ -62,6 +67,10 @@ int main(int argc, char **argv)
    list_addtail(&b1->cf_node.link, &f->body);
    list_addtail(&b2->cf_node.link, &f->body);
    f->next_ssa = 100;
+   if (!(argc > 1 && !strcmp(argv[1], "invalid"))) {
+      pco_instr *input = emit(f,b1,PCO_OP_MOV,0,0,0,1);
+      input->src[0] = pco_ref_imm32(0);
+   }
    emit(f,b1,PCO_OP_FNEG,1,0,0,1);
    emit(f,b1,PCO_OP_FABS,2,0,0,1);
    emit(f,b1,PCO_OP_FFLR,3,0,0,1);
@@ -72,7 +81,9 @@ int main(int argc, char **argv)
    emit(f,b2,PCO_OP_FADD,8,2,3,2);
    emit(f,b2,PCO_OP_FNEG,9,0,0,1);
    struct pco_opt_ctx ctx = { .mem_ctx = ralloc_context(NULL) };
+   pco_validate_shader(shader, "before prep");
    bool progress = pco_opt_prep_mods(shader, &ctx);
+   pco_validate_shader(shader, "after prep");
    if ((alloc_fail || grow_fail) && !failed_injections)
       return 2;
    printf("progress=%d\n", progress);
