@@ -16,8 +16,8 @@
 #define PVR_QUEUE_TIMING_TAG "QT"
 #endif
 struct pvr_queue_timing {
-   uint64_t stamp[5], kind_ns[6];
-   unsigned kind_count[6], phase;
+   uint64_t stamp[5], kind_ns[6], transfer_ns[3];
+   unsigned kind_count[6], transfer_count[3], phase;
    bool enabled, kind_error;
 };
 static unsigned pvr_queue_timing_reports;
@@ -27,6 +27,18 @@ static inline void pvr_queue_timing_begin(struct pvr_queue_timing *t)
    t->enabled = flag && !strcmp(flag, "1") &&
       __atomic_load_n(&pvr_queue_timing_reports, __ATOMIC_RELAXED) < 4;
    if (t->enabled) t->stamp[0] = pco_timing_now();
+}
+static inline void pvr_queue_timing_transfer_end(struct pvr_queue_timing *t,
+                                                  unsigned part, uint64_t start)
+{
+   if (!t->enabled) return;
+   uint64_t end = pco_timing_now();
+   if (part >= 3 || !start || end < start || UINT64_MAX - t->transfer_ns[part] < end - start) {
+      t->kind_error = true;
+      return;
+   }
+   t->transfer_ns[part] += end - start;
+   ++t->transfer_count[part];
 }
 static inline void pvr_queue_timing_step(struct pvr_queue_timing *t, unsigned phase)
 {
@@ -85,6 +97,11 @@ static inline void pvr_queue_timing_end(struct pvr_queue_timing *t, int result)
    for (unsigned i=0; i<6; i++) if (t->kind_count[i]) {
       snprintf(line,sizeof(line),PVR_QUEUE_TIMING_TAG " p%x i%x k%x c%x n%llx",
                (unsigned)getpid(),id,i,t->kind_count[i],(unsigned long long)t->kind_ns[i]);
+      pco_timing_log(line);
+   }
+   for (unsigned i=0; i<3; i++) if (t->transfer_count[i]) {
+      snprintf(line,sizeof(line),PVR_QUEUE_TIMING_TAG " p%x i%x u%x c%x n%llx",
+               (unsigned)getpid(),id,i,t->transfer_count[i],(unsigned long long)t->transfer_ns[i]);
       pco_timing_log(line);
    }
    if (t->kind_error) {

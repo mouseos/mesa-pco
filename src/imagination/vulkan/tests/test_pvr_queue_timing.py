@@ -24,6 +24,7 @@ int main(void){struct pvr_queue_timing t={0};
  t=(struct pvr_queue_timing){0};unsigned c=calls;pvr_queue_timing_begin(&t);pvr_queue_timing_end(&t,0);assert(calls==c&&lines==32);
  pvr_queue_timing_reports=0;t=(struct pvr_queue_timing){0};ticks=0;pvr_queue_timing_begin(&t);pvr_queue_timing_end(&t,1);assert(lines==34);
  pvr_queue_timing_reports=0;t=(struct pvr_queue_timing){0};ticks=1;pvr_queue_timing_begin(&t);uint64_t k=pvr_queue_timing_kind_begin(&t);ticks=42;pvr_queue_timing_kind_end(&t,3,k);assert(t.kind_count[3]==1&&t.kind_ns[3]==41);k=pvr_queue_timing_kind_begin(&t);ticks=0;pvr_queue_timing_kind_end(&t,3,k);assert(t.kind_error);ticks=1000000002;pvr_queue_timing_end(&t,0);assert(lines==40);
+ pvr_queue_timing_reports=0;t=(struct pvr_queue_timing){0};ticks=1;pvr_queue_timing_begin(&t);k=pvr_queue_timing_kind_begin(&t);ticks=101;pvr_queue_timing_transfer_end(&t,1,k);assert(t.transfer_count[1]==1&&t.transfer_ns[1]==100);ticks=1000000002;pvr_queue_timing_end(&t,0);assert(lines==45);
  return 0;}
 '''
 with tempfile.TemporaryDirectory() as d:

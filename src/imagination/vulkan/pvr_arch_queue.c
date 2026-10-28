@@ -422,30 +422,37 @@ static VkResult pvr_process_compute_cmd(struct pvr_device *device,
 
 static VkResult pvr_process_transfer_cmds(struct pvr_device *device,
                                           struct pvr_queue *queue,
-                                          struct pvr_sub_cmd_transfer *sub_cmd)
+                                          struct pvr_sub_cmd_transfer *sub_cmd,
+                                          struct pvr_queue_timing *timing)
 {
    struct vk_sync *sync;
    VkResult result;
 
+   uint64_t started = pvr_queue_timing_kind_begin(timing);
    result = vk_sync_create(&device->vk,
                            &device->pdevice->ws->syncobj_type,
                            0U,
                            0UL,
                            &sync);
+   pvr_queue_timing_transfer_end(timing, 0, started);
    if (result != VK_SUCCESS)
       return result;
 
+   started = pvr_queue_timing_kind_begin(timing);
    result = pvr_arch_transfer_job_submit(
       queue->transfer_ctx,
       sub_cmd,
       queue->next_job_wait_sync[PVR_JOB_TYPE_TRANSFER],
       sync);
+   pvr_queue_timing_transfer_end(timing, 1, started);
    if (result != VK_SUCCESS) {
       vk_sync_destroy(&device->vk, sync);
       return result;
    }
 
+   started = pvr_queue_timing_kind_begin(timing);
    pvr_update_job_syncs(device, queue, sync, PVR_JOB_TYPE_TRANSFER);
+   pvr_queue_timing_transfer_end(timing, 2, started);
 
    return result;
 }
@@ -862,7 +869,7 @@ static VkResult pvr_process_cmd_buffer(struct pvr_device *device,
                break;
          }
 
-         result = pvr_process_transfer_cmds(device, queue, &sub_cmd->transfer);
+         result = pvr_process_transfer_cmds(device, queue, &sub_cmd->transfer, timing);
 
          if (serialize_with_frag) {
             struct pvr_sub_cmd_event_barrier barrier = {
