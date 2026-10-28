@@ -63,19 +63,39 @@ static inline bool pco_opt_prep_mods(pco_shader *shader,
    pco_foreach_func_in_shader (func, shader) {
       struct util_dynarray *users =
          rzalloc_array_size(NULL, sizeof(*users), MAX2(func->next_ssa, 1));
-      for (unsigned ssa = 0; ssa < func->next_ssa; ++ssa)
-         util_dynarray_init(&users[ssa], users);
+      bool index_ok = users != NULL;
+      if (index_ok) {
+         for (unsigned ssa = 0; ssa < func->next_ssa; ++ssa)
+            util_dynarray_init(&users[ssa], users);
+      }
 
       unsigned order = 0;
       pco_foreach_instr_in_func (instr, func) {
-         ++order;
+         if (!index_ok)
+            break;
+         if (++order == 0) {
+            index_ok = false;
+            break;
+         }
          if (instr->op != PCO_OP_FADD && instr->op != PCO_OP_FMUL)
             continue;
          pco_foreach_instr_src_ssa (psrc, instr) {
-            assert(psrc->val < func->next_ssa);
-            struct pco_indexed_use use = { .instr = instr, .order = order };
-            util_dynarray_append(&users[psrc->val], use);
+            if (psrc->val >= func->next_ssa) {
+               index_ok = false;
+               break;
+            }
+            struct pco_indexed_use *use =
+               util_dynarray_grow(&users[psrc->val], struct pco_indexed_use, 1);
+            if (!use) {
+               index_ok = false;
+               break;
+            }
+            *use = (struct pco_indexed_use){ .instr = instr, .order = order };
          }
+      }
+      if (!index_ok) {
+         ralloc_free(users);
+         users = NULL;
       }
 
       order = 0;
@@ -85,11 +105,23 @@ static inline bool pco_opt_prep_mods(pco_shader *shader,
              mod->op != PCO_OP_FFLR)
             continue;
 
-         if (mod->dest[0].val < func->next_ssa)
-         util_dynarray_foreach (&users[mod->dest[0].val], struct pco_indexed_use, use) {
-            if (use->order <= order)
+         struct util_dynarray *candidates =
+            users && mod->dest[0].val < func->next_ssa
+               ? &users[mod->dest[0].val] : NULL;
+         unsigned count = candidates
+            ? util_dynarray_num_elements(candidates, struct pco_indexed_use) : 0;
+         pco_instr *instr = users ? NULL : pco_next_instr(mod);
+         for (unsigned i = 0; users ? i < count : instr != NULL;
+              ++i, instr = users ? instr : pco_next_instr(instr)) {
+            if (users) {
+               struct pco_indexed_use *use =
+                  util_dynarray_element(candidates, struct pco_indexed_use, i);
+               if (use->order <= order)
+                  continue;
+               instr = use->instr;
+            } else if (instr->op != PCO_OP_FADD && instr->op != PCO_OP_FMUL) {
                continue;
-            pco_instr *instr = use->instr;
+            }
 
             pco_ref *match_src = NULL;
             pco_ref *other_src = NULL;
