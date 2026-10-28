@@ -22,6 +22,11 @@
 #include <stdbool.h>
 
 /** Source use. */
+struct pco_indexed_use {
+   pco_instr *instr;
+   unsigned order;
+};
+
 struct pco_use {
    pco_instr *instr;
    pco_ref *psrc;
@@ -56,14 +61,35 @@ static inline bool pco_opt_prep_mods(pco_shader *shader,
     * and where modifiers might need to be applied on more than one source.
     */
    pco_foreach_func_in_shader (func, shader) {
+      struct util_dynarray *users =
+         rzalloc_array_size(NULL, sizeof(*users), MAX2(func->next_ssa, 1));
+      for (unsigned ssa = 0; ssa < func->next_ssa; ++ssa)
+         util_dynarray_init(&users[ssa], users);
+
+      unsigned order = 0;
+      pco_foreach_instr_in_func (instr, func) {
+         ++order;
+         if (instr->op != PCO_OP_FADD && instr->op != PCO_OP_FMUL)
+            continue;
+         pco_foreach_instr_src_ssa (psrc, instr) {
+            assert(psrc->val < func->next_ssa);
+            struct pco_indexed_use use = { .instr = instr, .order = order };
+            util_dynarray_append(&users[psrc->val], use);
+         }
+      }
+
+      order = 0;
       pco_foreach_instr_in_func_safe (mod, func) {
+         ++order;
          if (mod->op != PCO_OP_FNEG && mod->op != PCO_OP_FABS &&
              mod->op != PCO_OP_FFLR)
             continue;
 
-         pco_foreach_instr_in_func_from (instr, mod) {
-            if (instr->op != PCO_OP_FADD && instr->op != PCO_OP_FMUL)
+         if (mod->dest[0].val < func->next_ssa)
+         util_dynarray_foreach (&users[mod->dest[0].val], struct pco_indexed_use, use) {
+            if (use->order <= order)
                continue;
+            pco_instr *instr = use->instr;
 
             pco_ref *match_src = NULL;
             pco_ref *other_src = NULL;
@@ -150,6 +176,7 @@ static inline bool pco_opt_prep_mods(pco_shader *shader,
 
          progress = true;
       }
+      ralloc_free(users);
    }
 
    return progress;
