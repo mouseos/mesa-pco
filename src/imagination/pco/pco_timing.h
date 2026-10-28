@@ -14,14 +14,24 @@ struct pco_timing_state {
    unsigned id, used, errors;
    struct pco_timing_entry entries[PCO_TIMING_MAX_PASSES];
 };
+struct pco_timing_deferred {
+   struct pco_timing_scope *scope;
+   uint64_t tid, pre, start, end;
+   unsigned id, result;
+   char kind;
+   bool start_error;
+};
 struct pco_timing_scope {
    struct pco_timing_scope *previous;
    uint64_t tid;
-   unsigned id, attempts, used, dropped, errors;
+   unsigned id, attempts, used, dropped, errors, deferred_used, deferred_dropped;
+   struct pco_timing_deferred deferred[4];
    struct pco_timing_state shaders[PCO_TIMING_MAX_SHADERS];
 };
 extern _Thread_local struct pco_timing_state *pco_timing_current;
 extern _Thread_local struct pco_timing_scope *pco_timing_scope_current;
+extern _Thread_local struct pco_timing_scope *pco_timing_defer_root;
+extern _Thread_local unsigned pco_timing_pipeline_depth;
 bool pco_timing_claim(unsigned *id);
 bool pco_timing_begin(struct pco_timing_state *state);
 uint64_t pco_timing_now(void);

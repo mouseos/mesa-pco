@@ -16,5 +16,7 @@ for name in ('pvr_compute_pipeline_compile','pvr_graphics_pipeline_compile'):
   depth+=(s[end]=='{')-(s[end]=='}');end+=1
  assert not re.search(r'\bcache\b',s[first:end]),name
 assert 'pvr_cache=not_queried' in s and 'cache=hit' not in s and 'cache=miss' not in s
-assert 'pco_timing_scope_report(sample->scope)' in s
+assert 'pco_timing_scope_report(d->scope)' in s
+assert 'pco_timing_pipeline_depth++' in s and '--pco_timing_pipeline_depth' in s
+assert 'pvr_timing_defer(sample->root' in s
 print('PASS: both call sites, nested scope restoration, no PVR pipeline cache lookup and deferred report')

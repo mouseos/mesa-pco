@@ -31,6 +31,8 @@
  * nested passes are inclusive, and process-local records never contain IR. */
 _Thread_local struct pco_timing_state *pco_timing_current;
 _Thread_local struct pco_timing_scope *pco_timing_scope_current;
+_Thread_local struct pco_timing_scope *pco_timing_defer_root;
+_Thread_local unsigned pco_timing_pipeline_depth;
 static unsigned pco_timing_sequence;
 
 uint64_t pco_timing_now(void)
@@ -67,7 +69,8 @@ bool pco_timing_claim(unsigned *id)
 bool pco_timing_begin(struct pco_timing_state *state)
 {
    struct pco_timing_scope *scope = pco_timing_scope_current;
-   if (!scope || pco_timing_current) return false;
+   if (!scope) return false;
+   if (pco_timing_current) { ++scope->dropped; return false; }
    unsigned ordinal = scope->attempts++;
    if (ordinal >= PCO_TIMING_MAX_SHADERS) { ++scope->dropped; return false; }
    memset(state, 0, sizeof(*state));
@@ -139,7 +142,8 @@ void pco_timing_finish(struct pco_timing_state *state)
 {
    state->end_ns = pco_timing_now();
    pco_timing_current = NULL;
-   if (!state->end_ns || state->end_ns < state->start_ns) { ++state->scope->errors; return; }
+   if (!state->end_ns || state->end_ns < state->start_ns ||
+       state->scope->used >= PCO_TIMING_MAX_SHADERS) { ++state->scope->errors; return; }
    state->scope->shaders[state->scope->used++] = *state;
 }
 
